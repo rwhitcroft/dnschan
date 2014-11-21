@@ -4,7 +4,7 @@ dnschan
 This is a fully-functional trojan that runs over DNS. Its main goal is
 to provide a "low and slow" foothold on the target network, after which
 its upload functionality can be used to deliver a more advanced remote
-access trojan, e.g. Metasploit.
+access trojan, e.g. meterpreter.
 
 Features include:
 - support for multiple connections
