@@ -11,4 +11,3 @@ Features include:
 - file upload from local to remote
 - fetch a file from a URL and save it on the remote system
 - spawn a new background process on the remote system
-- re-transmission of dropped packets for file uploads
