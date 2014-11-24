@@ -119,20 +119,62 @@ void DNSClient::write_file(const string& filename)
 	packet_buffer.clear();
 }
 
-// credit to SO article here
 string DNSClient::exec(const string& cmd)
 {
-    FILE* pipe = _popen(cmd.c_str(), "r");
-    if(!pipe) return "ERROR";
-    char buffer[4096];
-    string result("");
-    while(!feof(pipe))
-    	if(fgets(buffer, sizeof(buffer), pipe) != NULL)
-    		result += buffer;
+	HANDLE stdout_r, stdout_w, stderr_r, stderr_w;
+	SECURITY_ATTRIBUTES sa;
+	sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+	sa.bInheritHandle = TRUE;
+	sa.lpSecurityDescriptor = NULL;
 
-	_pclose(pipe);
+	CreatePipe(&stderr_r, &stderr_w, &sa, 0);
+	SetHandleInformation(stderr_r, HANDLE_FLAG_INHERIT, 0);
+	CreatePipe(&stdout_r, &stdout_w, &sa, 0);
+	SetHandleInformation(stdout_r, HANDLE_FLAG_INHERIT, 0);
 
-	return string(result.begin(), result.end());
+	PROCESS_INFORMATION pi;
+	STARTUPINFO si;
+	ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
+	ZeroMemory(&si, sizeof(STARTUPINFO));
+
+	si.cb = sizeof(STARTUPINFO);
+	si.hStdError = stderr_w;
+	si.hStdOutput = stdout_w;
+	si.dwFlags |= STARTF_USESTDHANDLES;
+	
+	WCHAR wcmd[MAX_PATH];
+	wsprintf(wcmd, L"cmd.exe /c %s", Util::to_wstring(cmd).c_str());
+	CreateProcess(NULL, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+
+	CloseHandle(stderr_w);
+	CloseHandle(stdout_w);
+
+	DWORD dwRead;
+	CHAR buf[4096];
+	string out = "";
+	string err = "";
+	bool bSuccess = FALSE;
+
+	while(true) {
+		bSuccess = ReadFile(stdout_r, buf, 4096, &dwRead, NULL);
+		if(!bSuccess || dwRead == 0)
+			break;
+
+		string s(buf, dwRead);
+		out += s;
+	}
+
+	dwRead = 0;
+	while (true) {
+		bSuccess = ReadFile(stderr_r, buf, 4096, &dwRead, NULL);
+		if(!bSuccess || dwRead == 0)
+			break;
+
+		string s(buf, dwRead);
+		err += s;
+	}
+
+	return string(out + err);
 }
 
 void DNSClient::sync()
