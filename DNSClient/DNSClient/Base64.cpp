@@ -1,6 +1,7 @@
 #include "base64.h"
 
 #pragma warning(disable:4244)
+#pragma warning(disable:4267)
 
 static const string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-";
 

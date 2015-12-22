@@ -7,10 +7,11 @@ using std::string;
 class Packet
 {
 public:
-	Packet(unsigned int, unsigned char, const string&);
+	Packet(unsigned char, unsigned char, unsigned char, const string&);
 
 	// variables
-	unsigned int client_id;
+	unsigned char client_id;
+	unsigned char packet_id;
 	unsigned char opcode;
 	string data;
 	string domain;
