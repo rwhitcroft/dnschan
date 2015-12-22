@@ -68,7 +68,7 @@ class DNSServer
     @chunk_length = 180
     @max_chunks = 6
     @clients = Array.new
-    @domain = '.rw1d.xfil.me'
+    @domain = '.sub.domain.tld' # set this!
     @listen_address = '0.0.0.0'
     @listen_port = 53
     @mutex = Mutex.new
@@ -285,7 +285,7 @@ class DNSServer
       # this is a bit of a hack - ignore packets that don't contain this string.
       # best bet is to use the bare domain string (without the TLD), e.g. "google" not "google.com"
       # since words are not separated by dots in the raw bytes.
-      next unless request.include?("xfil") # set this!
+      next unless request.include?("???") # set this!
 
       # send a NOP by default, or set appropriately below
       packet = create_packet(Op::NOP, "")
