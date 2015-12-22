@@ -9,7 +9,7 @@ Packet::Packet(unsigned char i, unsigned char p, unsigned char c, const string& 
 	packet_id = p;
 	opcode = c;
 	data = s;
-	domain = ".rw1d.xfil.me"; // leading dot required
+	domain = ".sub.domain.tld"; // leading dot required
 	//printf("created Packet: %d %d %d %s\n", client_id, packet_id, opcode, s.c_str());
 }
 

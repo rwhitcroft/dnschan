@@ -326,8 +326,8 @@ int DNSClient::main()
 	return 0;
 }
 
-//int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
-int main(int argc, char** argv)
+//int main(int argc, char** argv)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
 	DNSClient c;
 	return c.main();
