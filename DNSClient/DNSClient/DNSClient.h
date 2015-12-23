@@ -13,7 +13,7 @@ public:
 	DNSClient();
 
 	int main();
-	void sync();
+	bool sync();
 	void pack_outbound_queue(unsigned char, string);
 	string exec(const string&);
 	string get_current_dir();

